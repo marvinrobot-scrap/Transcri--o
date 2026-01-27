@@ -147,7 +147,7 @@ def chamar_llm(system_prompt, user_message, max_tokens=-1):
         "max_tokens": max_tokens
     }
     try:
-        r = requests.post(URL_LM_STUDIO, json=payload, timeout=600)
+        r = requests.post(URL_LM_STUDIO, json=payload, timeout=3600)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
     except Exception as e:
