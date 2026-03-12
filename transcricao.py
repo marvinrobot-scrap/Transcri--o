@@ -200,9 +200,9 @@ def transcrever_com_whisper(model, caminho_audio):
     segments, info = model.transcribe(
         caminho_audio,
         language="pt",
-        beam_size=5,
+        beam_size=2,
         vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=500),
+        vad_parameters=dict(min_silence_duration_ms=700),
         initial_prompt=WHISPER_PROMPT,
         condition_on_previous_text=False
     )
@@ -370,7 +370,7 @@ def gerar_narrativa_final(texto_dialogo, nome, papel, base_dir, arquivo_entrada)
         "Entregue apenas o texto final do termo."
     )
 
-    paragrafos_dialogo = dividir_dialogo_em_paragrafos(texto_dialogo, max_chars=1000)
+    paragrafos_dialogo = dividir_em_blocos(texto_dialogo, max_chars=MAX_CHARS_BLOCO)
     partes_narrativa = []
 
     for i, trecho in enumerate(paragrafos_dialogo, start=1):
