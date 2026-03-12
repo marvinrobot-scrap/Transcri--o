@@ -2,3 +2,4 @@ temp/
 input/
 output/
 *.dll
+logs_llm/
