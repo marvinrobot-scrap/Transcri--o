@@ -3,9 +3,7 @@ import sys
 import subprocess
 import requests
 import json
-import re
 from datetime import datetime
-import importlib.util
 
 # ==============================================================================
 # 1. CORREÇÃO DE AMBIENTE (DLLs NVIDIA) - EXECUTA ANTES DE TUDO
@@ -19,7 +17,6 @@ def configurar_dlls_nvidia():
     print("[INIT] Configurando ambiente GPU e DLLs...")
 
     base_python = sys.prefix
-    # Caminhos comuns onde o pip instala as libs da nvidia
     caminhos_possiveis = [
         os.path.join(base_python, "Lib", "site-packages", "nvidia", "cublas", "bin"),
         os.path.join(base_python, "Lib", "site-packages", "nvidia", "cudnn", "bin"),
@@ -29,10 +26,7 @@ def configurar_dlls_nvidia():
     dl_encontradas = 0
     for path in caminhos_possiveis:
         if os.path.exists(path):
-            # 1. Adiciona ao PATH do sistema (para subprocessos e legado)
             os.environ["PATH"] = path + os.pathsep + os.environ["PATH"]
-
-            # 2. Adiciona ao diretório de DLLs do Python (obrigatório Py 3.8+)
             if hasattr(os, "add_dll_directory"):
                 try:
                     os.add_dll_directory(path)
@@ -46,9 +40,7 @@ def configurar_dlls_nvidia():
         print("   [AVISO] Nenhuma pasta NVIDIA encontrada automaticamente. Se der erro, verifique a instalação.")
 
 
-# Executa a configuração IMEDIATAMENTE
 configurar_dlls_nvidia()
-
 
 # ==============================================================================
 # 2. CONFIGURAÇÕES DO PROGRAMA
@@ -56,23 +48,18 @@ configurar_dlls_nvidia()
 
 MODELO_WHISPER = "large-v3"
 
-# Ajuste o identificador abaixo para o nome exato mostrado no LM Studio
-# Ex.: "qwen/qwen3.5-9b-instruct@q8_0"
+# Ajuste para o nome exato do modelo Qwen3.5-9B no LM Studio
 MODELO_LM_STUDIO = "qwen/qwen3.5-9b"
 
 URL_LM_STUDIO = "http://localhost:1234/v1/chat/completions"
 
-# Prompt para guiar o Whisper (Melhora pontuação e termos jurídicos)
 WHISPER_PROMPT = (
     "Transcrição de audiência judicial brasileira. "
     "Termos: Vossa Excelência, Meritíssimo, Ministério Público, Defesa, Réu, Testemunha. "
     "Pontuação formal. Diálogo claro entre perguntas e respostas."
 )
 
-# Tamanho máximo de caracteres por bloco enviado ao LLM (conservador)
 MAX_CHARS_BLOCO = 16000
-
-# Pasta de logs de auditoria
 LOG_DIR_NAME = "logs_llm"
 
 # ==============================================================================
@@ -80,7 +67,6 @@ LOG_DIR_NAME = "logs_llm"
 # ==============================================================================
 
 def limpar_nome_arquivo(nome_arquivo):
-    """Tenta extrair Nome e Papel do arquivo, ou usa padrão."""
     nome_base, _ = os.path.splitext(nome_arquivo)
     partes = nome_base.split('_')
     if len(partes) >= 2:
@@ -96,10 +82,6 @@ def formatar_timestamp(segundos):
 
 
 def converter_audio_ffmpeg(caminho_entrada, pasta_temp):
-    """
-    Converte para WAV 16kHz Mono e NORMALIZA o volume.
-    Resolve problemas de áudio baixo ou codecs estranhos.
-    """
     nome_base = os.path.splitext(os.path.basename(caminho_entrada))[0]
     caminho_saida = os.path.join(pasta_temp, f"{nome_base}_temp.wav")
 
@@ -125,17 +107,13 @@ def converter_audio_ffmpeg(caminho_entrada, pasta_temp):
 
 
 def dividir_em_blocos(texto, max_chars=MAX_CHARS_BLOCO):
-    """
-    Divide o texto em blocos de no máximo max_chars,
-    tentando quebrar em quebras de linha para não cortar falas no meio.
-    """
     linhas = texto.splitlines()
     blocos = []
     bloco_atual = []
     tamanho_atual = 0
 
     for linha in linhas:
-        linha_len = len(linha) + 1  # +1 por causa do \n
+        linha_len = len(linha) + 1
         if tamanho_atual + linha_len > max_chars and bloco_atual:
             blocos.append("\n".join(bloco_atual))
             bloco_atual = [linha]
@@ -150,11 +128,43 @@ def dividir_em_blocos(texto, max_chars=MAX_CHARS_BLOCO):
     return blocos
 
 
+def dividir_dialogo_em_paragrafos(texto_dialogo, max_chars=1000):
+    """
+    Divide o diálogo corrigido em pedaços menores para a Fase 2,
+    preservando quebras de linha para manter correspondência com o original.
+    max_chars é menor que MAX_CHARS_BLOCO para termos parágrafos curtos.
+    """
+    linhas = texto_dialogo.splitlines()
+    paragrafos = []
+    atual = []
+    tam = 0
+
+    for linha in linhas:
+        linha = linha.rstrip()
+        if not linha:
+            # quebra explícita de parágrafo
+            if atual:
+                paragrafos.append("\n".join(atual))
+                atual = []
+                tam = 0
+            continue
+
+        l_len = len(linha) + 1
+        if tam + l_len > max_chars and atual:
+            paragrafos.append("\n".join(atual))
+            atual = [linha]
+            tam = l_len
+        else:
+            atual.append(linha)
+            tam += l_len
+
+    if atual:
+        paragrafos.append("\n".join(atual))
+
+    return paragrafos
+
+
 def salvar_log_llm(base_dir, arquivo_entrada, fase, bloco_idx, payload, resposta):
-    """
-    Salva um log JSON com prompt, resposta e metadados para auditoria.
-    Cada chamada gera um arquivo separado.
-    """
     logs_dir = os.path.join(base_dir, LOG_DIR_NAME)
     os.makedirs(logs_dir, exist_ok=True)
 
@@ -181,7 +191,7 @@ def salvar_log_llm(base_dir, arquivo_entrada, fase, bloco_idx, payload, resposta
 
 
 # ==============================================================================
-# 4. INTEGRAÇÃO WHISPER
+# 4. WHISPER
 # ==============================================================================
 
 def transcrever_com_whisper(model, caminho_audio):
@@ -201,24 +211,58 @@ def transcrever_com_whisper(model, caminho_audio):
 
 
 # ==============================================================================
-# 5. INTEGRAÇÃO LM STUDIO (MODO CONSERVADOR)
+# 5. LM STUDIO (CHAMADA CONSERVADORA + FILTRO DE THINKING)
 # ==============================================================================
+
+def extrair_resposta_sem_pensamento(texto):
+    if not texto:
+        return texto
+
+    if "<think>" in texto and "</think>" in texto:
+        after = texto.split("</think>", 1)[-1].strip()
+        if after:
+            return after
+
+    patterns = [
+        "Thinking Process:",
+        "**Thinking Process:**",
+        "Raciocínio:",
+        "Raciocínio passo a passo:"
+    ]
+
+    last_idx = -1
+    for p in patterns:
+        idx = texto.rfind(p)
+        if idx > last_idx:
+            last_idx = idx
+
+    if last_idx != -1:
+        restante = texto[last_idx:].split("\n", 1)
+        if len(restante) == 2:
+            return restante[1].strip()
+
+    return texto.strip()
+
 
 def chamar_llm(system_prompt, user_message, max_tokens=-1, fase=None, bloco_idx=None,
                base_dir=None, arquivo_entrada=None):
-    """
-    Chamada única ao LM Studio, com parâmetros conservadores e logging opcional.
-    """
+    system_prompt_final = (
+        system_prompt
+        + "\n\nINSTRUÇÃO IMPORTANTE:\n"
+          "Você NÃO deve mostrar seu raciocínio passo a passo, nem qualquer seção intitulada "
+          "'Thinking Process', 'Raciocínio', 'Análise' ou similar. "
+          "Apenas produza diretamente o texto final solicitado, "
+          "sem explicar como chegou a ele."
+    )
+
+    user_message_final = user_message + "\n\n/no_think"
+
     payload = {
         "model": MODELO_LM_STUDIO,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
+            {"role": "system", "content": system_prompt_final},
+            {"role": "user", "content": user_message_final}
         ],
-        # Configuração bem conservadora para minimizar respostas criativas:
-        # - temperature baixa
-        # - top_p moderado
-        # - sem outras penalidades exóticas
         "temperature": 0.1,
         "top_p": 0.8,
         "max_tokens": max_tokens
@@ -227,24 +271,27 @@ def chamar_llm(system_prompt, user_message, max_tokens=-1, fase=None, bloco_idx=
     try:
         r = requests.post(URL_LM_STUDIO, json=payload, timeout=3600)
         r.raise_for_status()
-        resposta = r.json()["choices"][0]["message"]["content"]
+        bruta = r.json()["choices"][0]["message"]["content"]
+        resposta = extrair_resposta_sem_pensamento(bruta)
     except Exception as e:
         print(f"[ERRO LLM]: Falha na conexão com LM Studio - {e}")
+        bruta = None
         resposta = None
 
-    # Logging para auditoria, se base_dir/arquivo_entrada/fase/bloco_idx forem fornecidos
     if base_dir and arquivo_entrada and fase is not None and bloco_idx is not None:
-        salvar_log_llm(base_dir, arquivo_entrada, fase, bloco_idx, payload, resposta)
+        salvar_log_llm(base_dir, arquivo_entrada, fase, bloco_idx, payload, {
+            "raw": bruta,
+            "filtered": resposta,
+        })
 
     return resposta
 
 
 # ==============================================================================
-# 6. FASE 1 - DIARIZAÇÃO E CORREÇÃO EM BLOCOS
+# 6. FASE 1 - DIÁLOGO CORRIGIDO EM BLOCOS
 # ==============================================================================
 
 def gerar_diarizacao_corrigida(transcricao_bruta, nome, papel, base_dir, arquivo_entrada):
-    """Fase 1: Limpeza e Identificação de Falantes em blocos."""
     print(f"[LLM] Fase 1: Identificando falantes e corrigindo texto (em blocos)...")
 
     sys_prompt = (
@@ -294,44 +341,58 @@ def gerar_diarizacao_corrigida(transcricao_bruta, nome, papel, base_dir, arquivo
 
 
 # ==============================================================================
-# 7. FASE 2 - NARRATIVA JURÍDICA EM BLOCOS
+# 7. FASE 2 - NARRATIVA EM PARÁGRAFOS CURTOS E FIÉIS
 # ==============================================================================
 
 def gerar_narrativa_final(texto_dialogo, nome, papel, base_dir, arquivo_entrada):
-    """Fase 2: Narrativa Jurídica em blocos."""
-    print(f"[LLM] Fase 2: Gerando termo formal (em blocos)...")
+    """
+    Converte o diálogo já corrigido em uma narrativa jurídica,
+    mas em blocos curtos, com fidelidade máxima ao conteúdo original.
+    Cada bloco gera um parágrafo curto.
+    """
+    print(f"[LLM] Fase 2: Gerando termo formal (parágrafos curtos, fiéis)...")
 
     sys_prompt = (
-        "Você é um Assistente Jurídico. Converta o diálogo em um TERMO DE DEPOIMENTO.\n"
-        "DIRETRIZES:\n"
+        "Você é um Assistente Jurídico. Sua função é APENAS reescrever o diálogo abaixo "
+        "em forma de TERMO DE DEPOIMENTO, mantendo o conteúdo o mais fiel possível.\n"
+        "REGRAS OBRIGATÓRIAS:\n"
         "1. Escreva em terceira pessoa ('Disse que...', 'Informou que...').\n"
-        "2. Transforme perguntas em narrativa indireta ('Indagado sobre X, respondeu que Y').\n"
-        f"3. Inicie o primeiro parágrafo com: '{nome}, {papel}, ouvido em juízo, declarou que...'.\n"
-        "4. Seja DETALHISTA, mas NÃO invente fatos que não estejam no diálogo.\n"
-        "5. Texto corrido, sem tópicos.\n"
-        "6. Não resuma excessivamente: mantenha todas as informações relevantes do diálogo.\n"
-        "7. Não adicione opiniões pessoais nem comentários fora do teor do depoimento.\n"
-        "8. Não altere o sentido de nenhuma fala."
+        "2. Converta perguntas em narrativa indireta ('Indagado sobre X, respondeu que Y').\n"
+        "3. NÃO invente fatos, motivos, opiniões ou detalhes que não estejam literalmente "
+        "presentes no diálogo.\n"
+        "4. NÃO adicione análises, comentários, hipóteses ou sugestões.\n"
+        "5. NÃO altere a ordem dos acontecimentos.\n"
+        "6. NÃO resuma: reaproveite todas as informações relevantes do trecho recebido.\n"
+        "7. Se algum trecho estiver confuso ou faltar informação, escreva exatamente o que "
+        "consta no diálogo, sem tentar completar.\n"
+        "8. Produza um parágrafo curto para cada trecho recebido, sem listas ou tópicos.\n"
+        "9. Não use marcadores como 'Thinking Process', 'Análise' ou similares. "
+        "Entregue apenas o texto final do termo."
     )
 
-    blocos = dividir_em_blocos(texto_dialogo, max_chars=MAX_CHARS_BLOCO)
+    paragrafos_dialogo = dividir_dialogo_em_paragrafos(texto_dialogo, max_chars=1000)
     partes_narrativa = []
 
-    for i, bloco in enumerate(blocos, start=1):
-        print(f"[LLM] Fase 2 - bloco {i}/{len(blocos)}...")
+    for i, trecho in enumerate(paragrafos_dialogo, start=1):
+        print(f"[LLM] Fase 2 - parágrafo {i}/{len(paragrafos_dialogo)}...")
 
         if i == 1:
             prefixo = (
                 f"O texto abaixo é a primeira parte do diálogo transcrito do depoimento de {nome}, {papel}. "
-                "Converta em narrativa conforme as diretrizes.\n\n"
+                f"O primeiro parágrafo da narrativa deve começar exatamente com: "
+                f"'{nome}, {papel}, ouvido em juízo, declarou que...'. "
+                "A partir daí, reescreva o conteúdo do trecho em terceira pessoa, "
+                "seguindo rigorosamente as regras.\n\n"
             )
         else:
             prefixo = (
-                "O texto abaixo é continuação do mesmo depoimento (partes anteriores já foram convertidas). "
-                "Continue a narrativa no mesmo estilo, sem repetir o início e sem alterar o que já foi narrado.\n\n"
+                "O texto abaixo é continuação do mesmo depoimento. "
+                "Reescreva APENAS este trecho em forma de parágrafo curto, "
+                "continuando a narrativa no mesmo estilo, "
+                "sem repetir o início do depoimento e sem alterar o que já foi narrado.\n\n"
             )
 
-        user_prompt = prefixo + f"DIÁLOGO:\n{bloco}"
+        user_prompt = prefixo + f"DIÁLOGO:\n{trecho}"
 
         resposta = chamar_llm(
             sys_prompt,
@@ -344,8 +405,8 @@ def gerar_narrativa_final(texto_dialogo, nome, papel, base_dir, arquivo_entrada)
         )
 
         if not resposta:
-            print(f"[AVISO] Bloco {i} da narrativa retornou vazio, mantendo diálogo original do bloco.")
-            resposta = bloco
+            print(f"[AVISO] Parágrafo {i} da narrativa retornou vazio, mantendo diálogo original do trecho.")
+            resposta = trecho
 
         partes_narrativa.append(resposta.strip())
 
@@ -360,26 +421,21 @@ def processar_arquivo(caminho_arquivo, model, temp_dir, result_dir, base_dir):
     nome_arquivo = os.path.basename(caminho_arquivo)
     nome, papel = limpar_nome_arquivo(nome_arquivo)
 
-    # 1. Normalização de Áudio
     audio_wav = converter_audio_ffmpeg(caminho_arquivo, temp_dir)
     if not audio_wav:
         return
 
     try:
-        # 2. Transcrição
         segmentos = transcrever_com_whisper(model, audio_wav)
 
-        # Gera texto bruto
         texto_bruto = "\n".join(
             [f"{formatar_timestamp(s.start)} {s.text.strip()}" for s in segmentos]
         )
 
-        # Salva Arq 1 - texto bruto
         path_raw = os.path.join(result_dir, f"{nome}_1_bruto.txt")
         with open(path_raw, "w", encoding="utf-8") as f:
             f.write(texto_bruto)
 
-        # 3. Fase 1 LLM (Diálogo)
         texto_corrigido = gerar_diarizacao_corrigida(
             texto_bruto, nome, papel, base_dir, caminho_arquivo
         )
@@ -389,7 +445,6 @@ def processar_arquivo(caminho_arquivo, model, temp_dir, result_dir, base_dir):
             with open(path_diag, "w", encoding="utf-8") as f:
                 f.write(texto_corrigido)
 
-            # 4. Fase 2 LLM (Narrativa)
             narrativa = gerar_narrativa_final(
                 texto_corrigido, nome, papel, base_dir, caminho_arquivo
             )
@@ -405,9 +460,7 @@ def processar_arquivo(caminho_arquivo, model, temp_dir, result_dir, base_dir):
         print(f"[ERRO NO PROCESSO] {e}")
         import traceback
         traceback.print_exc()
-
     finally:
-        # Limpa wav temporário para economizar espaço
         if audio_wav and os.path.exists(audio_wav):
             try:
                 os.remove(audio_wav)
@@ -416,7 +469,6 @@ def processar_arquivo(caminho_arquivo, model, temp_dir, result_dir, base_dir):
 
 
 def main():
-    # Pastas relativas ao local do script
     base_dir = os.path.dirname(os.path.abspath(__file__))
     input_dir = os.path.join(base_dir, "input")
     temp_dir = os.path.join(base_dir, "temp")
@@ -430,14 +482,11 @@ def main():
     print(f"Saída:   {result_dir}")
     print(f"Modelo LLM: {MODELO_LM_STUDIO}")
 
-    # Carrega Modelo Whisper
     try:
         from faster_whisper import WhisperModel
-
         print("Carregando modelo Whisper na GPU...")
         model = WhisperModel(MODELO_WHISPER, device="cuda", compute_type="float16")
         print("Modelo Whisper (GPU) carregado com sucesso!")
-
     except Exception as e:
         print(f"\n[ERRO GPU] Falha ao carregar CUDA: {e}")
         print("Tentando fallback para CPU (INT8)... (ISSO SERÁ LENTO)")
@@ -448,7 +497,6 @@ def main():
             print(f"Erro fatal também na CPU: {e_cpu}")
             return
 
-    # Loop de arquivos
     arquivos = [
         f for f in os.listdir(input_dir)
         if os.path.isfile(os.path.join(input_dir, f))
@@ -462,7 +510,7 @@ def main():
 
     for arq in arquivos:
         if arq.lower().endswith(('.txt', '.py', '.md')):
-            continue  # Pula arquivos de texto/código
+            continue
         processar_arquivo(os.path.join(input_dir, arq), model, temp_dir, result_dir, base_dir)
 
     print("\nProcessamento finalizado.")
