@@ -223,7 +223,7 @@ def chamar_llm(system_prompt, user_message, max_tokens=-1, fase=None, bloco_idx=
     }
 
     try:
-        r = requests.post(URL_LM_STUDIO, json=payload, timeout=3600)
+        r = requests.post(URL_LM_STUDIO, json=payload, timeout=600)
         r.raise_for_status()
         bruta = r.json()["choices"][0]["message"]["content"]
         resposta = extrair_resposta_sem_pensamento(bruta)
