@@ -53,7 +53,7 @@ configurar_dlls_nvidia()
 
 # Ajuste apenas se necessário
 MODELO_WHISPER = "large-v3"
-MODELO_LM_STUDIO = "qwen2.5-7b-instruct-1m@q8_0" 
+MODELO_LM_STUDIO = "qwen/qwen3.5-9b" 
 URL_LM_STUDIO = "http://localhost:1234/v1/chat/completions"
 
 # Prompt para guiar o Whisper (Melhora pontuação e termos jurídicos)
