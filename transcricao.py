@@ -43,24 +43,19 @@ def configurar_dlls_nvidia():
 configurar_dlls_nvidia()
 
 # ==============================================================================
-# 2. CONFIGURAÇÕES DO PROGRAMA
+# 2. CONSTANTES DE CONFIGURAÇÃO
 # ==============================================================================
 
 MODELO_WHISPER = "large-v3"
-
-# Ajuste para o nome exato do modelo Qwen3.5-9B no LM Studio
 MODELO_LM_STUDIO = "qwen/qwen3.5-9b"
-
 URL_LM_STUDIO = "http://localhost:1234/v1/chat/completions"
 
-WHISPER_PROMPT = (
-    "Transcrição de audiência judicial brasileira. "
-    "Termos: Vossa Excelência, Meritíssimo, Ministério Público, Defesa, Réu, Testemunha. "
-    "Pontuação formal. Diálogo claro entre perguntas e respostas."
-)
-
-MAX_CHARS_BLOCO = 16000
+MAX_CHARS_BLOCO = 3000
 LOG_DIR_NAME = "logs_llm"
+WHISPER_PROMPT = (
+    "Audiência judicial brasileira. Depoimento formal. "
+    "Identifique juiz, promotor, defensor, depoente. Mantenha pontuação."
+)
 
 # ==============================================================================
 # 3. FUNÇÕES UTILITÁRIAS
@@ -128,42 +123,6 @@ def dividir_em_blocos(texto, max_chars=MAX_CHARS_BLOCO):
     return blocos
 
 
-def dividir_dialogo_em_paragrafos(texto_dialogo, max_chars=1000):
-    """
-    Divide o diálogo corrigido em pedaços menores para a Fase 2,
-    preservando quebras de linha para manter correspondência com o original.
-    max_chars é menor que MAX_CHARS_BLOCO para termos parágrafos curtos.
-    """
-    linhas = texto_dialogo.splitlines()
-    paragrafos = []
-    atual = []
-    tam = 0
-
-    for linha in linhas:
-        linha = linha.rstrip()
-        if not linha:
-            # quebra explícita de parágrafo
-            if atual:
-                paragrafos.append("\n".join(atual))
-                atual = []
-                tam = 0
-            continue
-
-        l_len = len(linha) + 1
-        if tam + l_len > max_chars and atual:
-            paragrafos.append("\n".join(atual))
-            atual = [linha]
-            tam = l_len
-        else:
-            atual.append(linha)
-            tam += l_len
-
-    if atual:
-        paragrafos.append("\n".join(atual))
-
-    return paragrafos
-
-
 def salvar_log_llm(base_dir, arquivo_entrada, fase, bloco_idx, payload, resposta):
     logs_dir = os.path.join(base_dir, LOG_DIR_NAME)
     os.makedirs(logs_dir, exist_ok=True)
@@ -217,11 +176,6 @@ def transcrever_com_whisper(model, caminho_audio):
 def extrair_resposta_sem_pensamento(texto):
     if not texto:
         return texto
-
-    if "<think>" in texto and "</think>" in texto:
-        after = texto.split("</think>", 1)[-1].strip()
-        if after:
-            return after
 
     patterns = [
         "Thinking Process:",
