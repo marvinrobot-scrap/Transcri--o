@@ -52,8 +52,8 @@ configurar_dlls_nvidia()
 # ==============================================================================
 
 # Ajuste apenas se necessário
-MODELO_WHISPER = "large-v3"
-MODELO_LM_STUDIO = "qwen/qwen3.5-9b" 
+MODELO_WHISPER = "Gemma_4"
+MODELO_LM_STUDIO = "google/gemma-4-26b-a4b" 
 URL_LM_STUDIO = "http://localhost:1234/v1/chat/completions"
 
 # Prompt para guiar o Whisper (Melhora pontuação e termos jurídicos)
