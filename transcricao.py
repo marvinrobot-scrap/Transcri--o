@@ -48,7 +48,7 @@ MODELO_WHISPER = "large-v3"
 MODELO_LM_FAST = "qwen/qwen3.5-9b"
 
 # Modelo mais forte para redação final
-MODELO_LM_FINAL = "google/gemma-4-26b-a4b"
+MODELO_LM_FINAL = "jurema-7b"
 
 URL_LM_STUDIO = "http://localhost:1234/v1/chat/completions"
 
