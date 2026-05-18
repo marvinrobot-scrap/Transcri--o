@@ -45,7 +45,7 @@ configurar_dlls_nvidia()
 MODELO_WHISPER = "large-v3"
 
 # Modelo rápido para fases estruturadas
-MODELO_LM_FAST = "jurema-7b"
+MODELO_LM_FAST = "qwen/qwen3.5-9b"
 
 # Modelo mais forte para redação final
 MODELO_LM_FINAL = "google/gemma-4-26b-a4b"
